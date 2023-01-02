@@ -1,0 +1,276 @@
+---
+title: "R Asia Bayesian Network"
+output:
+  word_document: default
+  html_notebook: default
+---
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
+```{r}
+setwd("~/MSc Comp Science/Final Project/Assignment 2/R Asia")
+```
+
+
+## Load the Relevant Libraries required to build the ASIA network using bnlearn
+
+```{r Libraries}
+
+library(bnlearn) #Package for creating and fitting the bayesian network
+library(rstan)## Used for inference
+library(dplyr)## Used for tidy tables
+library(skimr) ## Used for simple data view
+```
+
+Here are the Asia Parameters such as the CPTs and Nodes. This will be used in assessing the variance between a learned network and the known network
+
+```{r load in the ASIA Bayesian Parameters}
+asiaBN_Param <- read.bif("asia.bif")
+```
+
+
+Known network from S. Lauritzen, D. Spiegelhalter. Local Computation with Probabilities on Graphical Structures and their Application to Expert Systems (with discussion). Journal of the Royal Statistical Society: Series B (Statistical Methodology), 50(2):157-224, 1988.
+```{r create the known network}
+dag = model2network("[A][S][T|A][L|S][B|S][D|B:E][E|T:L][X|E]")
+```
+
+Plot the network created above that matches that of the one used by Lauritzen and Spiegelhalter
+```{r}
+plot(dag)
+```
+
+
+Now I load in the dataset which is part of the bnlearn package
+```{r}
+asia_DF <- data(asia)
+```
+
+```{r check score for known dag}
+score(dag, data = asia, type = "bic")
+```
+
+##Hillclimb Network learning
+Now to learn the network for comparison against the known. Firstly using HC
+
+```{r Asia Hillclimb}
+dag_hc <- hc(asia, optimized = TRUE, restart = 5, perturb = 5)
+modelstring(dag_hc)
+```
+
+```{r}
+plot(dag_hc)
+```
+
+
+
+```{r check score for hillclimb}
+score(dag_hc, data = asia, type = "bic")
+```
+
+Both networks are different with a single arc from Asia to Tuberculosis missing from the network. The Bayesian Information Criterion score is lower for the HC network, which would suggest an improved network. But is this the case. Before I look into this lets try learn with a different algorithm
+
+## Hillclimb 2
+
+```{r Asia Hillclimb 2}
+dag_hc2 <- hc(asia, optimized = TRUE, restart = 5, perturb = 100)
+modelstring(dag_hc2)
+```
+
+```{r}
+plot(dag_hc2)
+```
+```{r check score for hillclimb2}
+score(dag_hc2, data = asia, type = "bic")
+```
+
+## Hillclimb 3
+
+```{r Asia Hillclimb 3}
+dag_hc3 <- hc(asia, optimized = TRUE, restart = 100, perturb = 5)
+modelstring(dag_hc3)
+```
+
+```{r}
+plot(dag_hc3)
+```
+
+
+```{r check score for hillclimb3}
+score(dag_hc3, data = asia, type = "bic")
+```
+
+## Hillclimb 4
+
+```{r Asia Hillclimb 4}
+dag_hc4 <- hc(asia, optimized = TRUE, restart = 100, perturb = 100)
+modelstring(dag_hc4)
+```
+
+```{r}
+plot(dag_hc4)
+```
+
+
+```{r check score for hillclimb4}
+score(dag_hc4, data = asia, type = "bic")
+```
+
+## Hillclimb 5
+
+```{r Asia Hillclimb 5}
+dag_hc5 <- hc(asia, optimized = FALSE, restart = 5, perturb = 5)
+modelstring(dag_hc5)
+```
+
+```{r}
+plot(dag_hc5)
+```
+
+
+```{r check score for hillclimb5}
+score(dag_hc5, data = asia, type = "bic")
+```
+
+## Hillclimb 6
+
+```{r Asia Hillclimb 6}
+dag_hc6 <- hc(asia, optimized = FALSE, restart = 5, perturb = 100)
+modelstring(dag_hc6)
+```
+
+```{r}
+plot(dag_hc6)
+```
+
+
+```{r check score for hillclimb6}
+score(dag_hc6, data = asia, type = "bic")
+```
+
+## Hillclimb 7
+
+```{r Asia Hillclimb 7}
+dag_hc7 <- hc(asia, optimized = FALSE, restart = 100, perturb = 5)
+modelstring(dag_hc7)
+```
+
+```{r}
+plot(dag_hc7)
+```
+
+
+```{r check score for hillclimb7}
+score(dag_hc7, data = asia, type = "bic")
+```
+
+## Hillclimb 8
+
+```{r Asia Hillclimb 8}
+dag_hc8 <- hc(asia, optimized = FALSE, restart = 100, perturb = 100)
+modelstring(dag_hc8)
+```
+
+```{r}
+plot(dag_hc8)
+```
+
+
+```{r check score for hillclimb8}
+score(dag_hc8, data = asia, type = "bic")
+```
+
+## Chow Liu
+
+```{r Asia Chow Liu}
+cl <- chow.liu(asia)
+```
+
+```{r}
+plot(cl)
+```
+
+# Here I look at the inference of having Dyspnoea given that that they smoke and have bronchitis.
+```{r Inference Expert View}
+##fitted_expert = bn.fit(dag, asia)
+
+fit_results <- data.frame(matrix(ncol = 1, nrow = 10000))
+colnames(fit_results)<-c('Expert')
+
+for (i in 1:10000)
+{
+  fit_results$Expert[i] <- cpquery(bn.fit(dag, asia),(S == "yes"), (B == "yes"))
+}
+
+```
+
+```{r inference hc}
+for (i in 1:10000)
+{
+  fit_results$hc1[i] <- cpquery(bn.fit(dag_hc, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc2}
+for (i in 1:10000)
+{
+  fit_results$hc2[i] <- cpquery(bn.fit(dag_hc2, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc3}
+for (i in 1:10000)
+{
+  fit_results$hc3[i] <- cpquery(bn.fit(dag_hc3, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc4}
+for (i in 1:10000)
+{
+  fit_results$hc4[i] <- cpquery(bn.fit(dag_hc4, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc5}
+for (i in 1:10000)
+{
+  fit_results$hc5[i] <- cpquery(bn.fit(dag_hc5, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc6}
+for (i in 1:10000)
+{
+  fit_results$hc6[i] <- cpquery(bn.fit(dag_hc6, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc7}
+for (i in 1:10000)
+{
+  fit_results$hc7[i] <- cpquery(bn.fit(dag_hc7, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r inference hc8}
+for (i in 1:10000)
+{
+  fit_results$hc8[i] <- cpquery(bn.fit(dag_hc8, asia),(S == "yes"), (B == "yes"))
+}
+```
+
+```{r Take a look at results}
+skim(fit_results)
+```
+
+```{r results box plot}
+boxplot(fit_results, main = "Results of BN Approximate Inference",
+        xlab = "Structure",
+        ylab = "Approximate Inferred Result",
+        col = "blue",
+        notch = TRUE)
+```
+
+

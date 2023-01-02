@@ -1,0 +1,634 @@
+---
+title: "Fitness Dataset"
+author: "Richard"
+date: "2022-11-12"
+output:
+  word_document: default
+  html_document: default
+---
+
+# This R markdown book is to show the code and methods used to perform my research for my final dissertation
+
+I begin by setting the working directory
+```{r Working directory}
+setwd("~/MSc Comp Science/Final Project/Assignment 2/R Fitness Data")
+```
+
+Next load in the packages required for this research
+```{r Install Pacckages}
+packages <- c('bnlearn','tabulate','rstan','tidyverse','here','skimr','janitor','lubridate','ggrepel',
+              'ggplot2','reshape','rbmn','lubridate')
+not_installed <- packages[!(packages %in% installed.packages()[,"Package"])]
+if(length(not_installed)) install.packages(not_installed)
+```
+
+Then load in the Libraries for the above packages
+```{r Load Libraries}
+lapply(packages, library, character.only=TRUE)
+```
+
+Load in Datasets
+```{r load in Datasets}
+heartrate_df <- read_csv('C:/Users/rrobe/OneDrive/Documents/MSc Comp Science/Final Project/Assignment 2/R Fitness Data/Fitabase_Data4.12.16-5.12.16/heartrate_seconds_merged.csv')
+
+minuteSleep_df <- read_csv('C:/Users/rrobe/OneDrive/Documents/MSc Comp Science/Final Project/Assignment 2/R Fitness Data/Fitabase_Data4.12.16-5.12.16/minuteSleep_merged.csv')
+  
+minuteintensity_df <-read_csv('C:/Users/rrobe/OneDrive/Documents/MSc Comp Science/Final Project/Assignment 2/R Fitness Data/Fitabase_Data4.12.16-5.12.16/minuteIntensitiesNarrow_merged.csv')
+  
+minutestep_df <-read_csv('C:/Users/rrobe/OneDrive/Documents/MSc Comp Science/Final Project/Assignment 2/R Fitness Data/Fitabase_Data4.12.16-5.12.16/minuteStepsNarrow_merged.csv')
+```
+## Data Exploration
+```{r view basic details of heartrate data}
+head(heartrate_df)
+skim(heartrate_df)
+```
+
+
+```{r view basic details of intensity}
+head(minuteintensity_df)
+skim(minuteintensity_df)
+```
+
+
+```{r view basic details of sleep}
+head(minuteSleep_df)
+skim(minuteSleep_df)
+```
+
+
+```{r view basic details of step}
+head(minutestep_df)
+skim(minutestep_df)
+```
+
+```{r How many unique users are in each dataset}
+n_unique(minuteSleep_df$Id)
+n_unique(heartrate_df$Id)
+n_unique(minuteintensity_df$Id)
+n_unique(minutestep_df$Id)
+```
+
+It appears that not all users logged sleep and as sleep can impact heart rate i will need to limit the data to just these users and the dates that sleep was tracked for
+
+```{r get users who tracked sleep}
+sleep_tracked_users <- unique(minuteSleep_df$Id)
+```
+But how many of these also logged hear rate where only 14 users are held, this could be caused by the users having older fitbit models that do not have a built in Heart Rate Monitor
+
+```{r Get users who logged hearrate}
+heartrate_users <- unique(heartrate_df$Id)
+heartrate_users
+```
+Get a list of the users in both datasets
+```{r Intersect of Heart rate and Sleep}
+sleep_heart_users <- intersect(heartrate_users, sleep_tracked_users)
+sleep_heart_users
+```
+
+12 users left who will be the users data I will utilise for this research, reduce all dataframes to these users
+
+```{r remove incomplete users}
+heartrate_df <- heartrate_df[heartrate_df$Id %in% sleep_heart_users, ]
+minuteintensity_df <- minuteintensity_df[minuteintensity_df$Id %in% sleep_heart_users,]
+minuteSleep_df <- minuteSleep_df[minuteSleep_df$Id %in% sleep_heart_users,]
+minutestep_df <- minutestep_df[minutestep_df$Id %in% sleep_heart_users,]
+```
+
+I will now convert all date columns into a date format
+```{r convert heartrate_df dates to dates from string}
+heartrate_df_time <- heartrate_df %>%
+  dplyr::rename(datetime = Time) %>%
+  dplyr::rename(heartrate = Value) %>%
+  mutate(datetime = as_datetime(datetime,format ="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone()))
+  
+```
+ 
+```{r convert datetime strings to datetime Intensity}
+minuteintenity_df_time <- minuteintensity_df %>%
+  dplyr::rename(datetime = ActivityMinute) %>%
+  mutate(datetime = as_datetime(datetime,format ="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone()))
+```
+
+```{r convert datetime strings to datetime Sleep}
+minutesleep_df_time <- minuteSleep_df %>%
+  dplyr::rename(datetime = date) %>%
+  dplyr::rename(sleeplevel = value) %>%
+  mutate(datetime = as_datetime(datetime,format ="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone()))
+```
+
+```{r convert datetime strings to datetime steps}
+minutestep_df_time <- minutestep_df %>%
+  dplyr::rename(datetime = ActivityMinute) %>%
+  mutate(datetime = as_datetime(datetime,format ="%m/%d/%Y %I:%M:%S %p", tz=Sys.timezone()))
+```
+
+
+To free up memory remove the unwanted Dataframes
+```{r }
+rm("minuteSleep_df", "heartrate_df", "minuteintensity_df", "minutestep_df")
+```
+
+As all other Dataframes are in minutes I will need to aggregate the data in the Heart rate Dataframe which is currently in seconds
+```{r Aggregate Seconds in to minutes for Heart Rate}
+hr_agg <- heartrate_df_time %>%
+  group_by(Id, datetime = cut(datetime, breaks = "1 min")) %>%
+  summarise(heartrate = mean(heartrate))
+```
+```{r remove the not used Heart rate by second dataframe}
+rm("heartrate_df_time")
+```
+
+Now merge data into a single table starting with steps and intensity who have the equal observations
+```{r merge steps and intensity}
+intensity_step_merge <- merge(minuteintenity_df_time, minutestep_df_time, by = c("Id", "datetime"))
+```
+
+```{r now merge with heart rate}
+int_step_hr_merge <- merge(intensity_step_merge, hr_agg, by = c("Id", "datetime"), all = TRUE)
+```
+
+```{r now merge with sleep}
+all_merge <- merge(int_step_hr_merge, minutesleep_df_time, by =c("Id", "datetime"), all = TRUE)
+```
+
+There is clearly more rows now from this merge as the observations have increased from 484140 to 518075. This is understandable as the devices may have missed minutes for a certain part of the tracking. I will now explore the missing data and establish the approach to take before Network can be established.
+```{r}
+skim(all_merge)
+```
+
+# Log Id is not a field that is needed for this research so I can drop this from the Dataframe
+```{r drop unused column}
+all_merge <- subset(all_merge, select = -c(logId))
+```
+
+
+
+```{r create function to show missing values in visual}
+# A function that plots missingness
+# requires `reshape2`
+ggplot_missing <- function(x){
+  
+  x %>% 
+    is.na %>%
+    melt %>%
+    ggplot(data = .,
+           aes(x = X2,
+               y = X1)) +
+    geom_raster(aes(fill = value)) +
+    scale_fill_hue(name = "",
+                    labels = c("Present","Missing")) +
+    theme_minimal() + 
+    theme(axis.text.x  = element_text(angle=45, vjust=0.5)) + 
+    labs(x = "Variables in Dataset",
+         y = "Rows / observations",
+         title = "Missing Data Heat Map")
+}
+```
+
+
+```{r show visual}
+ggplot_missing(all_merge )
+```
+
+# Missing sleep data is understandable as people are awake during the day, however missing heart rate data is not. This may be due to the device for some users not having a Heart Rate montior. Let me check for missing variable as a proportion of whole dataset by user to see if this it the case.
+
+```{r Check if specific users are missing heart rate data}
+missing_heartrate <- all_merge %>%
+  subset(select = c(Id ,heartrate)) %>%
+  group_by(Id) %>%
+  count(na = is.na(heartrate)) %>%
+  pivot_wider(names_from = na, names_prefix = "NA", values_from = n, values_fill = 0)%>%
+  mutate(pct_missing = NATRUE/sum(NATRUE, NAFALSE)*100) 
+```
+
+
+```{r Users with missing data dataviz}
+ggplot(missing_heartrate, aes(Id, pct_missing)) + 
+  geom_col()
+```
+
+# There are 7 users who have over 40% missing Heart Rate Data I will remove these users first befor exploring 
+
+```{r remove users with more than 40%}
+missing_heartrate40 <- filter(missing_heartrate, pct_missing <= 40)
+```
+
+Now remove from main Data frame all_merge
+```{r only keep users with Heart rate data in 60% or more rows}
+all_merge40 <- all_merge[all_merge$Id %in% missing_heartrate40$Id,]
+
+```
+
+Now plot the same heat map
+```{r}
+ggplot_missing(all_merge40)
+```
+
+Let look at the rows where Heart Rate Data is missing 
+```{r reduced group look at rows with missing hear rate data}
+temp <- all_merge40 %>%
+  filter(if_any(heartrate, is.na)) %>%
+  filter(Steps > 0)
+
+temp
+  
+```
+I would have to assume that, where it is night time a person has taken their fitness watch off, resulting in no tracking data available. Then there are random minutes where no Hear rate data is available.  I can use 3 possible solutions to the latter, impute data, fill forward with previous value or group by to every 5 minutes.
+
+For purity of data I will simply remove the rows with no data for Heart Rate, Replace all missing sleep level with 0 to show that they are not a sleep and then reassess missing data:
+
+```{r Clean missing data}
+all_merge40_clean <- all_merge40 %>%
+  drop_na(heartrate) %>%
+  mutate(sleeplevel = replace_na(sleeplevel, 0))
+
+all_merge40_clean$Intensity <- as.factor(all_merge40_clean$Intensity)
+all_merge40_clean$sleeplevel <- as.factor(all_merge40_clean$sleeplevel)
+
+ggplot_missing(all_merge40_clean)
+```
+
+```{r}
+skim(all_merge40_clean)
+```
+
+I now have a 99.9% completion rate so will remove the 76 rows that are missing data to start building my network
+
+```{r}
+all_merge40_clean <- all_merge40_clean %>%
+  drop_na()
+
+skim(all_merge40_clean)
+```
+
+bnlearn does not accommodate the datetime value, so this will need to be removed to attempt a first build of the network and drop Id as it has little relevance
+```{r remove Datetime column for first model build}
+df_1stmodel <- subset(all_merge40_clean, select = -c(datetime, Id))
+
+```
+
+
+
+# Now Let's learn the first network from the data to analyse the output and investigate the possible reasons
+```{r Very First Model using Hill climb and all default parameters}
+fit_hcdag_1 <- hc(df_1stmodel, score = 'bic-cg')
+modelstring(fit_hcdag_1)
+
+```
+
+```{r plot the model}
+plot(fit_hcdag_1)
+```
+Look at the Gaussian distribution tables
+
+```{r create Gaussian distributions}
+bn_1st_hc <- bn.fit(fit_hcdag_1, data = df_1stmodel)
+```
+
+```{r look at Intensity}
+bn_1st_hc$Intensity
+```
+
+```{r}
+bn_1st_hc$Steps
+```
+
+```{r Hearrate}
+bn_1st_hc$heartrate
+```
+```{r check strength and direction calculations}
+boot.strength(df_1stmodel, algorithm = "hc")
+```
+
+# Taking an experts view point on this simple DAG
+```{r Expert DAG}
+expert_dag = model2network("[sleeplevel][Intensity|sleeplevel][Steps|sleeplevel][heartrate|Steps:Intensity]")
+```
+
+```{r}
+library("Hmisc")
+p_values <- rcorr(as.matrix(df_1stmodel))
+print(p_values)
+```
+
+
+
+
+```{r}
+plot(expert_dag)
+```
+Now have a comparison in score between the Expert view and the base Hillclimb network
+```{r Score comparison expert vs base hc}
+expert_score <- score(expert_dag, data = df_1stmodel, type = 'bic-cg')
+expert_score
+```
+
+
+
+
+
+```{r}
+hcbase_score <- score(fit_hcdag_1, data = df_1stmodel, type = 'bic-cg')
+hcbase_score
+```
+
+# May be able delete this section or may add to the EDA
+```{r Look at a day trend for each user}
+df_single_day <- all_merge40_clean %>%
+  filter(
+    between(datetime, as_datetime('2016-04-12'),as_datetime('2016-04-20'))
+  )
+```
+
+
+```{r}
+plot(df_single_day)
+```
+
+```{r Facet grid of users intensity}
+
+ggplot(df_single_day, aes(datetime, heartrate, colour = Intensity)) +
+  facet_grid(rows = vars(Id))+
+  geom_point()
+
+```
+
+```{r Facet grid of users sleeplevel}
+
+ggplot(df_single_day, aes(datetime, heartrate, colour = sleeplevel)) +
+  facet_grid(rows = vars(Id))+
+  geom_point()
+
+```
+
+
+```{r get the average sleep by date}
+ave_sleep <- all_merge40_clean %>%
+  mutate(date = as_date(datetime)) %>%
+  mutate(sleeplevel_n = as.numeric(sleeplevel)) %>%
+  group_by(date, Id) %>%
+  summarise(mean_sleep = mean(sleeplevel_n)) 
+```
+Merge the new aggregated data back into the main dataframe. This will give me an average sleep as well as a current sleep level
+```{r merge in the average sleep level}
+# Add a date column in preparation for the merge
+all_merge40_clean <- all_merge40_clean%>% 
+  mutate(date = as_date(datetime))
+
+# Merge the dataframes in Id and Date
+all_merge40_cleanave <- merge(all_merge40_clean, ave_sleep, by.x = c('Id','date'), by.y = c('Id','date'))
+```
+
+
+```{r Remove columns not needed for the 2nd model}
+df_2ndmodel <- subset(all_merge40_cleanave, select = -c(datetime, Id, date))
+```
+
+
+```{r Now fit the 2nd model to hc default}
+fit_hcdag_2 <- hc(df_2ndmodel, score = 'bic-cg')
+modelstring(fit_hcdag_2)
+```
+
+```{r plot 2nd hc model}
+plot(fit_hcdag_2)
+```
+
+```{r}
+ggplot(df_2ndmodel, aes(mean_sleep, heartrate, colour = Intensity)) +
+  geom_point()
+```
+
+```{r hc score for default setting on 2nd model}
+hcbase_score2 <- score(fit_hcdag_2, data = df_2ndmodel, type = 'bic-cg')
+hcbase_score2
+```
+```{r hc_2}
+hc_2 <- hc(df_2ndmodel, score = 'bic-cg', optimized = TRUE, restart = 100)
+modelstring(hc_2)
+plot(hc_2)
+hc_2_score <- score(hc_2, data = df_2ndmodel, type = 'bic-cg')
+hc_2_score
+```
+
+
+```{r hc_3}
+hc_3 <- hc(df_2ndmodel, score = 'bic-cg', optimized = FALSE, restart = 100)
+modelstring(hc_3)
+plot(hc_3)
+hc_3_score <- score(hc_3, data = df_2ndmodel, type = 'bic-cg')
+hc_3_score
+```
+
+```{r hc_4}
+hc_4 <- hc(df_2ndmodel, score = 'bic-cg', optimized = TRUE, restart = 0)
+modelstring(hc_4)
+plot(hc_4)
+hc_4_score <- score(hc_4, data = df_2ndmodel, type = 'bic-cg')
+hc_4_score
+```
+
+```{r hc_5}
+hc_5 <- hc(df_2ndmodel, score = 'bic-cg', optimized = FALSE, restart = 0)
+modelstring(hc_5)
+plot(hc_5)
+hc_5_score <- score(hc_5, data = df_2ndmodel, type = 'bic-cg')
+hc_5_score
+
+```
+
+```{r tabu_1}
+tabu_1 <- tabu(df_2ndmodel, score = 'bic-cg', optimized = TRUE, tabu = 5)
+modelstring(tabu_1)
+plot(tabu_1)
+tabu_1_score <- score(tabu_1, data = df_2ndmodel, type = 'bic-cg')
+tabu_1_score
+
+```
+
+```{r tabu_2}
+tabu_2 <- tabu(df_2ndmodel, score = 'bic-cg', optimized = FALSE, tabu = 5)
+modelstring(tabu_2)
+plot(tabu_2)
+tabu_2_score <- score(tabu_2, data = df_2ndmodel, type = 'bic-cg')
+tabu_2_score
+
+```
+```{r tabu_3}
+tabu_3 <- tabu(df_2ndmodel, score = 'bic-cg', optimized = TRUE, tabu = 10)
+modelstring(tabu_3)
+plot(tabu_3)
+tabu_3_score <- score(tabu_3, data = df_2ndmodel, type = 'bic-cg')
+tabu_3_score
+
+```
+
+```{r tabu_4}
+tabu_4 <- tabu(df_2ndmodel, score = 'bic-cg', optimized = FALSE, tabu = 10)
+modelstring(tabu_4)
+plot(tabu_4)
+tabu_4_score <- score(tabu_4, data = df_2ndmodel, type = 'bic-cg')
+tabu_4_score
+
+```
+
+```{r iamb_1}
+wl <- matrix(c('mean_sleep','heartrate'),
+             ncol = 2, byrow = TRUE,
+             dimnames = list(NULL, c('from','to')))
+iamb_1 <- iamb(df_2ndmodel, alpha = 0.05, whitelist = wl)
+modelstring(iamb_1)
+plot(iamb_1)
+iamb_1_score <- score(iamb_1, data = df_2ndmodel, type = 'bic-cg')
+iamb_1_score
+```
+
+```{r iamb_2}
+iamb_2 <- iamb(df_2ndmodel, alpha = 0.01, whitelist = wl)
+modelstring(iamb_2)
+plot(iamb_2)
+iamb_2_score <- score(iamb_2, data = df_2ndmodel, type = 'bic-cg')
+iamb_2_score
+```
+
+
+```{r}
+plot(iamb_1)
+```
+
+
+# Create an Augmented data set by adjusting the Heart rate randomly by a range of +/-10 bpm. This would randomly cause spikes and drops compared to normal
+
+```{r Create augmented dataset with changes to HR}
+df_2nd_aug <- df_2ndmodel %>%
+  mutate(aug = round(runif(length(heartrate),-10, 10))) %>%
+  mutate(aug_HR = round(heartrate) + aug) %>%
+  subset(select = -c(aug, heartrate))
+```
+
+# Compare distribution of Heart Rates
+```{r}
+df_2ndmodel %>%
+  ggplot(aes(heartrate)) +
+  geom_histogram() +
+  xlim(c(0, 150)) 
+```
+
+
+```{r}
+df_2nd_aug %>%
+  ggplot(aes(aug_HR)) +
+  geom_histogram() +
+  xlim(c(0, 150)) 
+```
+
+```{r Combine DF for a comparison of the HR distribution}
+hr1 <- df_2ndmodel %>%
+  mutate(name = 'Actual') %>%
+  select(c('name', 'heartrate'))
+
+hr2 <- df_2nd_aug %>%
+  mutate(name = 'Augmented') %>%
+  select(c('name', 'aug_HR')) %>%
+  rename(c(aug_HR = 'heartrate'))
+
+hist_compare <- bind_rows(hr1, hr2)
+
+ggplot(hist_compare, aes(heartrate,fill = name)) + 
+  geom_histogram(alpha = 0.5, position = 'identity') + 
+  labs(title = 'Heartrate Histogram Comparison')
+```
+# Can the BIC score be used to show the difference to flag an anomoly worth investigation
+```{r BIC Score using base model with augmented data}
+df_2nd_aug <- rename(df_2nd_aug,c(aug_HR = 'heartrate'))
+hc_aug_score10 <- score(fit_hcdag_2, data = df_2nd_aug, type = 'bic-cg')
+hc_aug_score10
+```
+
+
+```{r Create augmented dataset with changes to HR by 5 BPM}
+df_2nd_aug_5bpm <- df_2ndmodel %>%
+  mutate(aug = round(runif(length(heartrate),-5, 5))) %>%
+  mutate(aug_HR = round(heartrate) + aug) %>%
+  subset(select = -c(aug, heartrate)) %>%
+  rename(c(aug_HR = 'heartrate'))
+
+hc_aug_score5 <- score(fit_hcdag_2, data = df_2nd_aug_5bpm, type = 'bic-cg')
+hc_aug_score5
+```
+```{r}
+df_2nd_aug_20bpm <- df_2ndmodel %>%
+  mutate(aug = round(runif(length(heartrate),-20, 20))) %>%
+  mutate(aug_HR = round(heartrate) + aug) %>%
+  subset(select = -c(aug, heartrate)) %>%
+  rename(c(aug_HR = 'heartrate'))
+
+hc_aug_score20 <- score(fit_hcdag_2, data = df_2nd_aug_20bpm, type = 'bic-cg')
+hc_aug_score20
+```
+
+```{r}
+df_2nd_aug_1bpm <- df_2ndmodel %>%
+  mutate(aug = round(runif(length(heartrate),-1, 1))) %>%
+  mutate(aug_HR = round(heartrate) + aug) %>%
+  subset(select = -c(aug, heartrate)) %>%
+  rename(c(aug_HR = 'heartrate'))
+
+hc_aug_score1 <- score(fit_hcdag_2, data = df_2nd_aug_1bpm, type = 'bic-cg')
+hc_aug_score1
+```
+
+```{r}
+df_2nd_aug_1bpm <- df_2ndmodel %>%
+  mutate(aug = round(runif(length(heartrate),-1, 1))) %>%
+  mutate(aug_HR = round(heartrate) + aug) %>%
+  subset(select = -c(aug, heartrate)) %>%
+  rename(c(aug_HR = 'heartrate'))
+
+hc_aug_score1 <- score(fit_hcdag_2, data = df_2nd_aug_1bpm, type = 'bic-cg')
+hc_aug_score1
+```
+# Now I can see that the bic score can be used as a trigger with boundaries defined by set baseline and bounds of expected variation. But does this change the network shape. I will test this using just the Hill climb method
+
+```{r Now fit the augmented data to the hc default learning dag}
+fit_hcdag_aug <- hc(df_2nd_aug_20bpm, score = 'bic-cg')
+modelstring(fit_hcdag_aug)
+```
+```{r}
+plot(fit_hcdag_aug)
+```
+# Comparison of CPT for Heart Rate
+```{r create CPTs for comparison}
+bn_2nd_hc <- bn.fit(fit_hcdag_2, data = df_2ndmodel)
+bn_aug_hc <- bn.fit(fit_hcdag_2, data = df_2nd_aug_20bpm)
+```
+
+```{r Heart rate for base model with data frame for 2nd model}
+bn_2nd_hc$heartrate
+```
+```{r Heart rate for base model with data frame for aug model}
+bn_aug_hc$heartrate
+```
+
+#Inference comparison
+```{r Inference comparison}
+inf_test <- cpdist(bn_2nd_hc, nodes = c('heartrate', 'sleeplevel', 'Intensity'),
+                   evidence = (sleeplevel == 0) & (Intensity == 1), n = 10^5)
+summary(inf_test$heartrate)
+
+```
+```{r Inference comparison aug}
+inf_test_aug <- cpdist(bn_aug_hc, nodes = c('heartrate', 'sleeplevel', 'Intensity'),
+                   evidence = (sleeplevel == 0) & (Intensity == 1), n = 10^5)
+summary(inf_test_aug$heartrate)
+
+```
+
+```{r Comparison of all nodes to highlight the CPT that is different}
+all.equal(bn_2nd_hc$Intensity, bn_aug_hc$Intensity)
+all.equal(bn_2nd_hc$Steps, bn_aug_hc$Steps)
+all.equal(bn_2nd_hc$sleeplevel, bn_aug_hc$sleeplevel)
+all.equal(bn_2nd_hc$mean_sleep, bn_aug_hc$mean_sleep)
+all.equal(bn_2nd_hc$heartrate, bn_aug_hc$heartrate)
+```
+
